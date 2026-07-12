@@ -1,0 +1,28 @@
+[project]
+name = "movedb-demo"
+version = "0.1.0"
+description = "Interactive AddBiomechanics explorer powered by Marimo and DuckDB"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "marimo[sql]>=0.23.14",
+    "duckdb>=1.5.0",
+    "polars>=1.38.1",
+    "altair>=5.5.0",
+    "movedb-core",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pyright",
+]
+
+[tool.uv.sources]
+movedb-core = { path = "../movedb-core", editable = true }
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
