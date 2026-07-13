@@ -9,3 +9,5 @@ dist/
 .pytest_cache/
 .ruff_cache/
 result
+.direnv/
+__marimo__/
