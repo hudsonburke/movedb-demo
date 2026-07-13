@@ -1,0 +1,184 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.14",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "3e751478c4d061bb05e749ad4cdd3aca",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "5a20e6848c8aa35182d12f095dc8421b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"addbiomechanics-explorer\">AddBiomechanics Explorer</h1>\n<span class=\"paragraph\">Explore human movement data from the\n<a href=\"https://addbiomechanics.org/\" rel=\"noopener noreferrer\" target=\"_blank\">AddBiomechanics</a> dataset using SQL.\nData was ingested from <code>.b3d</code> files into Parquet bundles using\n<a href=\"https://github.com/SOMA-Bionics/movedb-core\" rel=\"noopener noreferrer\" target=\"_blank\">MoveDB</a>.</span>\n<hr /></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "c94185807e0944551f20fdb887372d3d",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><table>\n<thead>\n<tr>\n<th></th>\n<th></th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><strong>Subject</strong></td>\n<td><code>P010_split0</code> \u2014 female, 21y, 54.0kg, 1.656m</td>\n</tr>\n<tr>\n<td><strong>Skeleton</strong></td>\n<td>37 DOFs</td>\n</tr>\n<tr>\n<td><strong>Trials</strong></td>\n<td>34 total (30 walking)</td>\n</tr>\n<tr>\n<td><strong>Tables</strong></td>\n<td><code>subjects</code>, <code>trials</code>, <code>kinematics_summary</code>, <code>gait_trajectories</code></td>\n</tr>\n</tbody>\n</table></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "9f14844d53e5be35eca80ddbebd124e4",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"query-builder\">Query Builder</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "c40571bf6e3e72c86de7db17aeaa1598",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='lEQa-0' random-id='d63d997f-47f5-87f7-7564-97edf4982bc7'><marimo-dropdown data-initial-value='[&quot;kinematics_summary&quot;]' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eTable&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-options='[&quot;subjects&quot;,&quot;trials&quot;,&quot;kinematics_summary&quot;,&quot;gait_trajectories&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false' data-disabled='false'></marimo-dropdown></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "72516c8e87ea201be683adc00159cdc1",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "d73ae454b65b394e5161e6d928e69be4",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='Xref-0' random-id='c30c7ab8-98fa-27be-9d3a-024a7ea4c6c7'><marimo-text-area data-initial-value='&quot;SELECT * FROM read_parquet(&#x27;data/kinematics_summary.parquet&#x27;)&#92;nWHERE dof_name IN (&#x27;knee_angle_l&#x27;, &#x27;knee_angle_r&#x27;)&#92;nORDER BY trial_name, dof_name&quot;' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eSQL&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-placeholder='&quot;&quot;' data-disabled='false' data-debounce='true' data-full-width='false' data-rows='10'></marimo-text-area></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "0152a20a3c2250949705531454d153c8",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='SFPL-0' random-id='2d49ee78-e0ca-efb1-d398-aadf1ed38699'><marimo-button data-initial-value='0' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eRun query&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-kind='&quot;neutral&quot;' data-disabled='false' data-full-width='false'></marimo-button></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "8d1e4410051864f692006850b1b5b768",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "92ca68f1907d3a85d98f49c67ff56738",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><hr />\n<h2 id=\"gait-trajectories\">Gait Trajectories</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "86c457c48bcef93c9d50065b8b71d972",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='Kclp-0' random-id='9a7818ec-fa54-06a8-bf2b-5fdfaf7b38d1'><marimo-multiselect data-initial-value='[&quot;knee_angle_l&quot;,&quot;knee_angle_r&quot;,&quot;hip_flexion_l&quot;,&quot;hip_flexion_r&quot;]' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eSelect DOFs&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-options='[&quot;ankle_angle_l&quot;,&quot;ankle_angle_r&quot;,&quot;arm_add_l&quot;,&quot;arm_add_r&quot;,&quot;arm_flex_l&quot;,&quot;arm_flex_r&quot;,&quot;arm_rot_l&quot;,&quot;arm_rot_r&quot;,&quot;elbow_flex_l&quot;,&quot;elbow_flex_r&quot;,&quot;hip_adduction_l&quot;,&quot;hip_adduction_r&quot;,&quot;hip_flexion_l&quot;,&quot;hip_flexion_r&quot;,&quot;hip_rotation_l&quot;,&quot;hip_rotation_r&quot;,&quot;knee_angle_l&quot;,&quot;knee_angle_r&quot;,&quot;lumbar_bending&quot;,&quot;lumbar_extension&quot;,&quot;lumbar_rotation&quot;,&quot;mtp_angle_l&quot;,&quot;mtp_angle_r&quot;,&quot;pelvis_list&quot;,&quot;pelvis_rotation&quot;,&quot;pelvis_tilt&quot;,&quot;pelvis_tx&quot;,&quot;pelvis_ty&quot;,&quot;pelvis_tz&quot;,&quot;pro_sup_l&quot;,&quot;pro_sup_r&quot;,&quot;subtalar_angle_l&quot;,&quot;subtalar_angle_r&quot;,&quot;wrist_dev_l&quot;,&quot;wrist_dev_r&quot;,&quot;wrist_flex_l&quot;,&quot;wrist_flex_r&quot;]' data-full-width='false' data-disabled='false'></marimo-multiselect></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "eb4fe011c4ad0313f048eb3a0ab5bc17",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='emfo-0' random-id='7f3616c9-3f07-786f-9c9d-ee92c19fd445'><marimo-switch data-initial-value='false' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eShow mean \u00b1 std across strides&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-disabled='false'></marimo-switch></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "6aa0eca87d12da753a21ecf8243d42d0",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "428dbab44d2d6c8341e0d7296dc5c627",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><hr />\n<span class=\"paragraph\"><strong>About:</strong> <a href=\"https://github.com/SOMA-Bionics/movedb-core\" rel=\"noopener noreferrer\" target=\"_blank\">MoveDB</a> \u00b7\n<a href=\"https://duckdb.org/\" rel=\"noopener noreferrer\" target=\"_blank\">DuckDB</a> \u00b7\n<a href=\"https://marimo.io/\" rel=\"noopener noreferrer\" target=\"_blank\">Marimo</a> \u00b7\n<a href=\"https://addbiomechanics.org/\" rel=\"noopener noreferrer\" target=\"_blank\">AddBiomechanics</a></span></span>"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

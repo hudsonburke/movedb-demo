@@ -32,5 +32,24 @@
             '';
           };
         });
+
+      apps = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          runDemo = pkgs.writeShellApplication {
+            name = "movedb-demo";
+            runtimeInputs = with pkgs; [ uv tailscale ];
+            text = ''
+              cd "$(git rev-parse --show-toplevel)"
+              exec ./run.sh
+            '';
+          };
+        in
+        {
+          default = {
+            type = "app";
+            program = "${runDemo}/bin/movedb-demo";
+          };
+        });
     };
 }
