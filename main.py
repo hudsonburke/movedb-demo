@@ -9,11 +9,14 @@ def _():
     import marimo as mo
     import duckdb
     import polars as pl
-    import altair as alt
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     import numpy as np
+    from scipy.interpolate import CubicSpline
     from pathlib import Path
 
-    return Path, alt, mo, np, pl
+    return CubicSpline, Path, go, make_subplots, mo, np, pl, px
 
 
 @app.cell
@@ -38,7 +41,7 @@ def _(conn, mo):
 @app.cell
 def _(mo):
     signal = mo.ui.dropdown(
-        options=["kinematics", "markers", "grf", "forceplates"],
+        options=["kinematics", "markers", "grf"],
         value="kinematics",
         label="1. Signal",
     )
@@ -130,7 +133,7 @@ def _(conn, mo, signal, study, subject, trial):
             value=[],
             label="5. Markers (first 20 shown)",
         )
-    elif _sig == "grf":
+    else:  # grf
         _opts = conn.execute(f"""
             SELECT DISTINCT k.body_name FROM grf k
             JOIN subjects s ON k.subject_id = s.subject_id
@@ -141,18 +144,6 @@ def _(conn, mo, signal, study, subject, trial):
             options=_opts,
             value=_opts,
             label="5. Bodies",
-        )
-    else:
-        _opts = conn.execute(f"""
-            SELECT DISTINCT k.fp_name FROM forceplates k
-            JOIN subjects s ON k.subject_id = s.subject_id
-            {_where_clause}
-            ORDER BY k.fp_name
-        """).pl()["fp_name"].to_list()
-        signal_param = mo.ui.multiselect(
-            options=_opts,
-            value=_opts,
-            label="5. Force plates",
         )
 
     signal_param
@@ -232,13 +223,11 @@ def _(
         "kinematics": "k.frame, k.time, k.trial_name, k.dof_name, k.pos, k.vel, k.acc, k.tau",
         "markers": "k.frame, k.time, k.trial_name, k.marker_name, k.x, k.y, k.z, k.residual",
         "grf": "k.frame, k.time, k.trial_name, k.body_name, k.contact, k.fx, k.fy, k.fz, k.copx, k.copy, k.copz",
-        "forceplates": "k.frame, k.time, k.trial_name, k.fp_name, k.variable, k.axis, k.value",
     }
     _param_col = {
         "kinematics": "k.dof_name",
         "markers": "k.marker_name",
         "grf": "k.body_name",
-        "forceplates": "k.fp_name",
     }
 
     # Build WHERE clauses for trials/data
@@ -270,17 +259,25 @@ def _(
     _where = ("WHERE " + "\n  AND ".join(_wheres)) if _wheres else ""
     _limit_clause = f"LIMIT {trial_limit.value.strip()}" if trial_limit.value.strip() else ""
 
+    # If signal params are specified, ensure trials have ALL of them
+    _having_clause = ""
+    if signal_param.value and len(signal_param.value) > 1:
+        _having_clause = f"HAVING COUNT(DISTINCT {_param_col[_sig]}) = {len(signal_param.value)}"
+
     # Query matching trials with metadata
-    _sql = f"""SELECT DISTINCT t.trial_name, t.subject_id, t.num_frames, t.duration_s, s.study,
+    _sql = f"""SELECT t.trial_name, t.subject_id, t.num_frames, t.duration_s, s.study,
            s.biological_sex, s.mass_kg, s.height_m, s.age_years
     FROM trials t
     JOIN subjects s ON t.subject_id = s.subject_id
     JOIN {_sig} k ON k.trial_name = t.trial_name AND k.subject_id = t.subject_id
     {_where}
+    GROUP BY t.trial_name, t.subject_id, t.num_frames, t.duration_s, s.study,
+             s.biological_sex, s.mass_kg, s.height_m, s.age_years
+    {_having_clause}
     ORDER BY s.study, t.subject_id, t.trial_name
     {_limit_clause}"""
 
-    sql_editor = mo.ui.text_area(value=_sql, label="SQL (editable)", rows=14)
+    sql_editor = mo.ui.text_area(value=_sql, label="SQL (editable)", rows=16)
     sql_editor
     return (sql_editor,)
 
@@ -359,13 +356,13 @@ def _(mo, query_result, signal):
         plot_kind = mo.ui.dropdown(options=["(no data)"], value="(no data)", label="Plot type")
     elif signal.value == "markers":
         plot_kind = mo.ui.dropdown(
-            options=["individual trials", "mean ± SD", "gait cycle normalized", "3D scatter (x/y/z)"],
+            options=["gait cycle normalized", "raw data", "mean ± SD", "3D scatter (x/y/z)"],
             value="gait cycle normalized",
             label="Plot type",
         )
     else:
         plot_kind = mo.ui.dropdown(
-            options=["individual trials", "mean ± SD", "gait cycle normalized"],
+            options=["gait cycle normalized", "raw data", "mean ± SD"],
             value="gait cycle normalized",
             label="Plot type",
         )
@@ -374,113 +371,109 @@ def _(mo, query_result, signal):
 
 
 @app.cell
-def _(alt, conn, mo, np, pl, plot_kind, query_result, signal, signal_param):
+def _(conn, CubicSpline, go, make_subplots, mo, np, pl, plot_kind, query_result, signal, signal_param):
     if query_result is None or query_result.height == 0:
         _output = mo.md("*Run a query above to see a plot.*")
     elif plot_kind.value == "(no data)":
         _output = mo.md("*Select a plot type.*")
     else:
-        with mo.status.spinner(subtitle="Generating plot..."):
-            _sig = signal.value
-            _kind = plot_kind.value
+        _spinner = mo.status.spinner(subtitle="Generating plot...")
+        _spinner
+        _sig = signal.value
+        _kind = plot_kind.value
 
-            # Build trial filter from matched trials
-            _trial_list = ", ".join(f"'{t}'" for t in query_result["trial_name"].to_list())
-            _trial_filter = f"trial_name IN ({_trial_list})"
+        # Build trial filter from matched trials
+        _trial_list = ", ".join(f"'{t}'" for t in query_result["trial_name"].to_list())
+        _trial_filter = f"trial_name IN ({_trial_list})"
 
-            # Fetch frame data for matched trials
-            if _sig == "kinematics":
-                _dof_filter = ""
-                if signal_param.value:
-                    _dofs = ", ".join(f"'{d}'" for d in signal_param.value)
-                    _dof_filter = f"AND dof_name IN ({_dofs})"
-                _df = conn.execute(f"""
-                    SELECT frame, time, trial_name, dof_name, pos
-                    FROM kinematics
-                    WHERE {_trial_filter} {_dof_filter}
-                    ORDER BY trial_name, frame
-                """).pl()
-                _param_col = "dof_name"
-                _y_col = "pos"
-                _y_title = "Position (rad)"
-            elif _sig == "markers":
-                _marker_filter = ""
-                if signal_param.value:
-                    _markers = ", ".join(f"'{m}'" for m in signal_param.value)
-                    _marker_filter = f"AND marker_name IN ({_markers})"
-                _df = conn.execute(f"""
-                    SELECT frame, time, trial_name, marker_name, x, y, z
-                    FROM markers
-                    WHERE {_trial_filter} {_marker_filter}
-                    ORDER BY trial_name, frame
-                """).pl()
-                _param_col = "marker_name"
-                _y_col = "x"
-                _y_title = "X (m)"
-            elif _sig == "grf":
-                _body_filter = ""
-                if signal_param.value:
-                    _bodies = ", ".join(f"'{b}'" for b in signal_param.value)
-                    _body_filter = f"AND body_name IN ({_bodies})"
-                _df = conn.execute(f"""
-                    SELECT frame, time, trial_name, body_name, fz
-                    FROM grf
-                    WHERE {_trial_filter} {_body_filter}
-                    ORDER BY trial_name, frame
-                """).pl()
-                _param_col = "body_name"
-                _y_col = "fz"
-                _y_title = "Vertical GRF (N)"
-            else:
-                _fp_filter = ""
-                if signal_param.value:
-                    _fps = ", ".join(f"'{f}'" for f in signal_param.value)
-                    _fp_filter = f"AND fp_name IN ({_fps})"
-                _df = conn.execute(f"""
-                    SELECT frame, time, trial_name, fp_name, value
-                    FROM forceplates
-                    WHERE {_trial_filter} {_fp_filter}
-                    ORDER BY trial_name, frame
-                """).pl()
-                _param_col = "fp_name"
-                _y_col = "value"
-                _y_title = "Value"
+        # Fetch frame data for matched trials
+        if _sig == "kinematics":
+            _dof_filter = ""
+            if signal_param.value:
+                _dofs = ", ".join(f"'{d}'" for d in signal_param.value)
+                _dof_filter = f"AND dof_name IN ({_dofs})"
+            _df = conn.execute(f"""
+                SELECT frame, time, trial_name, dof_name, pos
+                FROM kinematics
+                WHERE {_trial_filter} {_dof_filter}
+                ORDER BY trial_name, frame
+            """).pl()
+            _param_col = "dof_name"
+            _y_col = "pos"
+            _y_title = "Position (rad)"
+        elif _sig == "markers":
+            _marker_filter = ""
+            if signal_param.value:
+                _markers = ", ".join(f"'{m}'" for m in signal_param.value)
+                _marker_filter = f"AND marker_name IN ({_markers})"
+            _df = conn.execute(f"""
+                SELECT frame, time, trial_name, marker_name, x, y, z
+                FROM markers
+                WHERE {_trial_filter} {_marker_filter}
+                ORDER BY trial_name, frame
+            """).pl()
+            _param_col = "marker_name"
+            _y_col = "x"
+            _y_title = "X (m)"
+        else:  # grf
+            _body_filter = ""
+            if signal_param.value:
+                _bodies = ", ".join(f"'{b}'" for b in signal_param.value)
+                _body_filter = f"AND body_name IN ({_bodies})"
+            _df = conn.execute(f"""
+                SELECT frame, time, trial_name, body_name, fz
+                FROM grf
+                WHERE {_trial_filter} {_body_filter}
+                ORDER BY trial_name, frame
+            """).pl()
+            _param_col = "body_name"
+            _y_col = "fz"
+            _y_title = "Vertical GRF (N)"
 
-            if _df.height == 0:
-                _output = mo.md("*No frame data found for matched trials.*")
-            elif _kind == "3D scatter (x/y/z)":
+        if _df.height == 0:
+            _output = mo.md("*No frame data found for matched trials.*")
+        else:
+            # Downsample if too many points (> 50k) - take every Nth point
+            if _df.height > 50000:
+                _step = max(1, _df.height // 50000)
+                _df = _df.sort("trial_name", "frame").with_row_index("_idx").filter(pl.col("_idx") % _step == 0).drop("_idx")
+
+            _params = sorted(_df[_param_col].unique().to_list())
+            _n_params = len(_params)
+
+            if _kind == "3D scatter (x/y/z)":
                 # Special case for markers 3D scatter
-                _chart = (
-                    alt.Chart(_df.sample(min(5000, _df.height)))
-                    .mark_circle(size=8, opacity=0.4)
-                    .encode(
-                        x=alt.X("x:Q", title="X (m)"),
-                        y=alt.Y("y:Q", title="Y (m)"),
-                        color=alt.Color("z:Q", title="Z (m)", scale=alt.Scale(scheme="viridis")),
-                        tooltip=["marker_name", "x", "y", "z"],
-                    )
-                    .properties(height=400)
-                )
-                _output = mo.ui.altair_chart(_chart)
-            elif _kind == "individual trials":
-                # Show all trial lines, faceted by parameter
-                _params = sorted(_df[_param_col].unique().to_list())
-                _charts = []
-                for _p in _params:
+                _sample = _df.sample(min(5000, _df.height))
+                _fig = go.Figure(data=[go.Scatter3d(
+                    x=_sample["x"].to_list(),
+                    y=_sample["y"].to_list(),
+                    z=_sample["z"].to_list(),
+                    mode="markers",
+                    marker=dict(size=3, opacity=0.4, color=_sample["z"].to_list(), colorscale="Viridis"),
+                    text=_sample["marker_name"].to_list(),
+                )])
+                _fig.update_layout(height=600, title="3D Marker Positions")
+                _output = mo.ui.plotly(_fig)
+            elif _kind == "raw data":
+                # Show all trial lines, subplots by parameter
+                _fig = make_subplots(rows=_n_params, cols=1, subplot_titles=_params, shared_xaxes=True, vertical_spacing=0.05)
+                _trials = sorted(_df["trial_name"].unique().to_list())
+                for _i, _p in enumerate(_params, 1):
                     _sub = _df.filter(pl.col(_param_col) == _p)
-                    _c = (
-                        alt.Chart(_sub)
-                        .mark_line(opacity=0.5)
-                        .encode(
-                            x=alt.X("time:Q", title="Time (s)"),
-                            y=alt.Y(f"{_y_col}:Q", title=_y_title),
-                            color="trial_name:N",
-                        )
-                        .properties(height=200, title=_p)
-                    )
-                    _charts.append(_c)
-                _chart = alt.vconcat(*_charts).resolve_scale(y="independent")
-                _output = mo.ui.altair_chart(_chart)
+                    for _t in _trials:
+                        _tdata = _sub.filter(pl.col("trial_name") == _t)
+                        _fig.add_trace(go.Scatter(
+                            x=_tdata["time"].to_list(),
+                            y=_tdata[_y_col].to_list(),
+                            name=_t,
+                            legendgroup=_t,
+                            showlegend=(_i == 1),
+                            line=dict(width=1),
+                            opacity=0.6,
+                        ), row=_i, col=1)
+                _fig.update_xaxes(title_text="Time (s)", row=_n_params, col=1)
+                _fig.update_layout(height=300 * _n_params, title=f"{_y_title} — Raw Data")
+                _output = mo.ui.plotly(_fig)
             elif _kind == "gait cycle normalized":
                 # Normalize to gait cycle using GRF contact events
                 _trials = _df["trial_name"].unique().to_list()
@@ -488,9 +481,7 @@ def _(alt, conn, mo, np, pl, plot_kind, query_result, signal, signal_param):
                 _stride_id = 0
                 for _trial in _trials:
                     _trial_data = _df.filter(pl.col("trial_name") == _trial)
-                    # Get subject_id for this trial
                     _sub_id = query_result.filter(pl.col("trial_name") == _trial)["subject_id"][0]
-                    # Get GRF contact data for stride detection
                     _contact_df = conn.execute(f"""
                         SELECT frame, body_name, contact FROM grf
                         WHERE subject_id = '{_sub_id}' AND trial_name = '{_trial}'
@@ -498,7 +489,6 @@ def _(alt, conn, mo, np, pl, plot_kind, query_result, signal, signal_param):
                     """).pl()
                     if _contact_df.height == 0:
                         continue
-                    # Use first body for stride detection
                     _body = _contact_df["body_name"].unique().sort()[0]
                     _c = _contact_df.filter(pl.col("body_name") == _body).sort("frame")
                     _arr = _c["contact"].to_numpy()
@@ -506,232 +496,125 @@ def _(alt, conn, mo, np, pl, plot_kind, query_result, signal, signal_param):
                     _frames = _c["frame"].to_numpy()
                     if len(_strikes) < 2:
                         continue
-                    # Normalize each stride
                     for _si in range(len(_strikes) - 1):
                         _sf = int(_frames[_strikes[_si]])
                         _ef = int(_frames[_strikes[_si + 1]])
                         if _ef - _sf < 10:
                             continue
-                        # Get data for this stride
                         _stride_data = _trial_data.filter(
-                            (pl.col("frame") >= _sf) & (pl.col("frame") < _ef)
-                        )
-                        if _stride_data.height == 0:
+                            (pl.col("frame") >= _sf) & (pl.col("frame") <= _ef)
+                        ).sort("frame").unique("frame")
+                        if _stride_data.height < 4:
                             continue
-                        # Normalize time to 0-100% of gait cycle
-                        _stride_data = _stride_data.with_columns(
-                            ((pl.col("frame") - _sf) / (_ef - _sf) * 100).alias("gait_pct")
-                        )
-                        # Add stride identifier
-                        _stride_data = _stride_data.with_columns(
-                            pl.lit(f"{_trial}_stride{_si}").alias("stride_id")
-                        )
-                        _norm_rows.append(_stride_data)
+                        # Cubic spline interpolation to 101 points (0-100%)
+                        _frames_arr = _stride_data["frame"].to_numpy().astype(float)
+                        _values = _stride_data[_y_col].to_numpy()
+                        _pct_arr = (_frames_arr - _sf) / (_ef - _sf) * 100
+                        # Ensure endpoints are included
+                        if _pct_arr[0] > 0:
+                            _pct_arr = np.insert(_pct_arr, 0, 0.0)
+                            _values = np.insert(_values, 0, _values[0])
+                        if _pct_arr[-1] < 100:
+                            _pct_arr = np.append(_pct_arr, 100.0)
+                            _values = np.append(_values, _values[-1])
+                        # Remove any duplicate x values
+                        _mask = np.diff(_pct_arr, prepend=-1) > 0
+                        _pct_arr = _pct_arr[_mask]
+                        _values = _values[_mask]
+                        if len(_pct_arr) < 4:
+                            continue
+                        _cs = CubicSpline(_pct_arr, _values)
+                        _interp_pcts = np.linspace(0, 100, 101)
+                        _interp_vals = _cs(_interp_pcts)
+                        _param_val = _stride_data[_param_col][0]
+                        for _pct, _val in zip(_interp_pcts, _interp_vals):
+                            _norm_rows.append({
+                                "gait_pct": float(_pct),
+                                _y_col: float(_val),
+                                "stride_id": f"{_trial}_s{_si}",
+                                _param_col: _param_val,
+                            })
                         _stride_id += 1
                 if not _norm_rows:
                     _output = mo.md("*No strides found for normalization.*")
                 else:
-                    _norm_df = pl.concat(_norm_rows)
-                    # Plot by parameter
-                    _params = sorted(_norm_df[_param_col].unique().to_list())
-                    _charts = []
-                    for _p in _params:
-                        _sub = _norm_df.filter(pl.col(_param_col) == _p)
-                        _c = (
-                            alt.Chart(_sub)
-                            .mark_line(opacity=0.3)
-                            .encode(
-                                x=alt.X("gait_pct:Q", title="% Gait Cycle", scale=alt.Scale(domain=[0, 100])),
-                                y=alt.Y(f"{_y_col}:Q", title=_y_title),
-                                color="trial_name:N",
-                                detail="stride_id:N",
-                            )
-                            .properties(height=200, title=f"{_p} — Gait Cycle Normalized")
+                    _norm_df = pl.DataFrame(_norm_rows)
+                    _agg = (
+                        _norm_df.group_by("gait_pct", _param_col)
+                        .agg(pl.col(_y_col).mean().alias("mean"), pl.col(_y_col).std().alias("std"))
+                        .with_columns(
+                            (pl.col("mean") - pl.col("std")).alias("lo"),
+                            (pl.col("mean") + pl.col("std")).alias("hi"),
                         )
-                        _charts.append(_c)
-                    _chart = alt.vconcat(*_charts).resolve_scale(y="independent")
-                    _output = mo.ui.altair_chart(_chart)
-            else:
-                # Mean ± SD across trials, faceted by parameter
+                        .sort("gait_pct")
+                    )
+                    _fig = make_subplots(rows=_n_params, cols=1, subplot_titles=[f"{p} — Gait Cycle Normalized" for p in _params], shared_xaxes=True, vertical_spacing=0.05)
+                    for _i, _p in enumerate(_params, 1):
+                        _sub = _norm_df.filter(pl.col(_param_col) == _p)
+                        _sub_agg = _agg.filter(pl.col(_param_col) == _p)
+                        # Individual stride lines
+                        for _sid in _sub["stride_id"].unique().to_list():
+                            _sdata = _sub.filter(pl.col("stride_id") == _sid)
+                            _fig.add_trace(go.Scatter(
+                                x=_sdata["gait_pct"].to_list(),
+                                y=_sdata[_y_col].to_list(),
+                                line=dict(color="gray", width=0.5),
+                                opacity=0.15,
+                                showlegend=False,
+                            ), row=_i, col=1)
+                        # SD band
+                        _fig.add_trace(go.Scatter(
+                            x=_sub_agg["gait_pct"].to_list() + _sub_agg["gait_pct"].to_list()[::-1],
+                            y=_sub_agg["hi"].to_list() + _sub_agg["lo"].to_list()[::-1],
+                            fill="toself",
+                            fillcolor="rgba(31,119,180,0.1)",
+                            line=dict(color="rgba(0,0,0,0)"),
+                            showlegend=False,
+                        ), row=_i, col=1)
+                        # Mean line
+                        _fig.add_trace(go.Scatter(
+                            x=_sub_agg["gait_pct"].to_list(),
+                            y=_sub_agg["mean"].to_list(),
+                            line=dict(color="#1f77b4", width=2),
+                            name="Mean",
+                            showlegend=(_i == 1),
+                        ), row=_i, col=1)
+                    _fig.update_xaxes(title_text="% Gait Cycle", range=[0, 100], row=_n_params, col=1)
+                    _fig.update_layout(height=300 * _n_params, title=f"{_y_title}")
+                    _output = mo.ui.plotly(_fig)
+            else:  # mean ± SD (raw time)
                 _agg = (
                     _df.group_by("time", _param_col)
-                    .agg(
-                        pl.col(_y_col).mean().alias("mean"),
-                        pl.col(_y_col).std().alias("std"),
-                    )
+                    .agg(pl.col(_y_col).mean().alias("mean"), pl.col(_y_col).std().alias("std"))
                     .with_columns(
                         (pl.col("mean") - pl.col("std")).alias("lo"),
                         (pl.col("mean") + pl.col("std")).alias("hi"),
                     )
                     .sort("time")
                 )
-                _params = sorted(_agg[_param_col].unique().to_list())
-                _charts = []
-                for _p in _params:
+                _fig = make_subplots(rows=_n_params, cols=1, subplot_titles=[f"{p} — mean ± SD" for p in _params], shared_xaxes=True, vertical_spacing=0.05)
+                for _i, _p in enumerate(_params, 1):
                     _sub = _agg.filter(pl.col(_param_col) == _p)
-                    _base = alt.Chart(_sub).encode(
-                        x=alt.X("time:Q", title="Time (s)"),
-                        y=alt.Y("mean:Q", title=_y_title, scale=alt.Scale(zero=False)),
-                    )
-                    _line = _base.mark_line(color="#1f77b4", strokeWidth=2)
-                    _band = _base.mark_area(opacity=0.2, color="#1f77b4").encode(y="lo:Q", y2="hi:Q")
-                    _c = (_band + _line).properties(height=200, title=f"{_p} — mean ± SD")
-                    _charts.append(_c)
-                _chart = alt.vconcat(*_charts).resolve_scale(y="independent")
-                _output = mo.ui.altair_chart(_chart)
-    _output
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md("""
-    ## Stride Normalization
-    """)
-    return
-
-
-@app.cell
-def _(conn, mo, query_result, signal, signal_param):
-    if query_result is None or query_result.height == 0 or signal.value != "kinematics":
-        stride_dof = mo.ui.dropdown(options=["(no data)"], value="(no data)", label="DOF for stride norm")
-    else:
-        # Use the DOFs already selected in signal_param, or query available DOFs
-        if signal_param.value:
-            _dofs = signal_param.value
-        else:
-            _dofs = conn.execute("SELECT DISTINCT dof_name FROM kinematics ORDER BY dof_name").pl()["dof_name"].to_list()
-
-        _default = _dofs[0]
-        # Prefer knee_angle_l or knee_angle_r if available
-        for pref in ["knee_angle_l", "knee_angle_r"]:
-            if pref in _dofs:
-                _default = pref
-                break
-        stride_dof = mo.ui.dropdown(
-            options=_dofs,
-            value=_default,
-            label="DOF for stride norm",
-        )
-    stride_dof
-    return (stride_dof,)
-
-
-@app.cell
-def _(conn, mo, np, pl, query_result, signal, stride_dof):
-    stride_result = pl.DataFrame()
-    if query_result is None or query_result.height == 0 or signal.value != "kinematics":
-        _output = mo.md("*Run a kinematics query above first.*")
-    else:
-        _dof = stride_dof.value if stride_dof.value != "(no data)" else "knee_angle_l"
-        _dof = _dof.replace("'", "''")
-
-        rows = []
-        _stride_counter = 0
-        _summaries = []
-
-        # Iterate over all matched trials
-        for _row in query_result.iter_rows(named=True):
-            _tn = _row["trial_name"].replace("'", "''")
-            _sid = _row["subject_id"].replace("'", "''")
-
-            contact_df = conn.execute(f"SELECT frame, body_name, contact FROM grf WHERE subject_id = '{_sid}' AND trial_name = '{_tn}' ORDER BY frame").pl()
-            kin_df = conn.execute(f"SELECT frame, pos FROM kinematics WHERE subject_id = '{_sid}' AND trial_name = '{_tn}' AND dof_name = '{_dof}' ORDER BY frame").pl()
-
-            if kin_df.height == 0 or contact_df.height == 0:
-                continue
-
-            _body = contact_df["body_name"].unique().sort()[0]
-            _c = contact_df.filter(pl.col("body_name") == _body).sort("frame")
-            _arr = _c["contact"].to_numpy()
-            _strikes = np.where(np.diff(_arr.astype(int)) == 1)[0]
-            _frames = _c["frame"].to_numpy()
-
-            if len(_strikes) < 2:
-                continue
-
-            _lookup = dict(zip(kin_df["frame"].to_numpy(), kin_df["pos"].to_numpy()))
-
-            for si in range(len(_strikes) - 1):
-                sf, ef = int(_frames[_strikes[si]]), int(_frames[_strikes[si + 1]])
-                if ef - sf < 10:
-                    continue
-                angles = np.array([_lookup.get(f, np.nan) for f in range(sf, ef)])
-                resampled = np.interp(np.linspace(0, 100, 101), np.linspace(0, 100, ef - sf), angles)
-                for pct, ang in enumerate(resampled):
-                    rows.append({
-                        "trial_name": _row["trial_name"],
-                        "stride_id": _stride_counter,
-                        "pct": pct,
-                        "angle_deg": round(float(ang * 180 / np.pi), 2),
-                    })
-                _stride_counter += 1
-
-            _summaries.append(f"{_row['trial_name']}: {len(_strikes)-1} strides")
-
-        stride_result = pl.DataFrame(rows)
-        if _summaries:
-            _output = mo.md(f"**{_dof}** — " + ", ".join(_summaries) + f" → {stride_result.height} total rows")
-        else:
-            _output = mo.md("*No strides found in any matched trial.*")
-    _output
-    return (stride_result,)
-
-
-@app.cell
-def _(alt, mo, pl, stride_result):
-    if stride_result.height == 0:
-        _output = mo.md("*Segment strides above to see chart.*")
-    else:
-        # Per-trial means with individual trial lines
-        _trial_agg = (
-            stride_result.group_by("trial_name", "pct")
-            .agg(pl.col("angle_deg").mean().alias("mean_angle"))
-            .sort("trial_name", "pct")
-        )
-
-        # Overall mean ± SD across all strides
-        _overall = (
-            stride_result.group_by("pct")
-            .agg(pl.col("angle_deg").mean().alias("mean"), pl.col("angle_deg").std().alias("std"))
-            .with_columns(
-                (pl.col("mean") - pl.col("std")).alias("lo"),
-                (pl.col("mean") + pl.col("std")).alias("hi"),
-            )
-            .sort("pct")
-        )
-
-        # Individual stride lines (faint)
-        _raw = (
-            alt.Chart(stride_result)
-            .mark_line(opacity=0.08, color="gray")
-            .encode(x="pct:Q", y="angle_deg:Q", detail="stride_id:N")
-        )
-
-        # SD band (overall)
-        _base = alt.Chart(_overall).encode(x=alt.X("pct:Q", title="% Gait Cycle", scale=alt.Scale(domain=[0, 100])))
-        _band = _base.mark_area(opacity=0.15, color="#1f77b4").encode(y="lo:Q", y2="hi:Q")
-
-        # Per-trial mean lines (colored)
-        _trial_lines = (
-            alt.Chart(_trial_agg)
-            .mark_line(opacity=0.7, strokeWidth=1.5)
-            .encode(
-                x=alt.X("pct:Q", title="% Gait Cycle", scale=alt.Scale(domain=[0, 100])),
-                y=alt.Y("mean_angle:Q", title="Angle (deg)"),
-                color=alt.Color("trial_name:N", title="Trial"),
-            )
-        )
-
-        # Overall mean line (thick)
-        _overall_line = _base.mark_line(color="#1f77b4", strokeWidth=3).encode(y=alt.Y("mean:Q", title="Angle (deg)"))
-
-        _output = mo.ui.altair_chart(
-            (_raw + _band + _trial_lines + _overall_line).properties(
-                title="Stride-Normalized Angle (per-trial means with overall mean ± 1 SD)",
-                height=400,
-            )
-        )
+                    # SD band
+                    _fig.add_trace(go.Scatter(
+                        x=_sub["time"].to_list() + _sub["time"].to_list()[::-1],
+                        y=_sub["hi"].to_list() + _sub["lo"].to_list()[::-1],
+                        fill="toself",
+                        fillcolor="rgba(31,119,180,0.1)",
+                        line=dict(color="rgba(0,0,0,0)"),
+                        showlegend=False,
+                    ), row=_i, col=1)
+                    # Mean line
+                    _fig.add_trace(go.Scatter(
+                        x=_sub["time"].to_list(),
+                        y=_sub["mean"].to_list(),
+                        line=dict(color="#1f77b4", width=2),
+                        name="Mean",
+                        showlegend=(_i == 1),
+                    ), row=_i, col=1)
+                _fig.update_xaxes(title_text="Time (s)", row=_n_params, col=1)
+                _fig.update_layout(height=300 * _n_params, title=f"{_y_title}")
+                _output = mo.ui.plotly(_fig)
     _output
     return
 

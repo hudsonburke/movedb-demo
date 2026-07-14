@@ -1,0 +1,10 @@
+
+        Running main.py ⚡
+
+        ➜  URL: http://0.0.0.0:8080
+        ➜  Network: http://10.0.0.206:8080
+
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 8080): [errno 98] address already in use
+
+        Thanks for using marimo! 🌊🍃
+
