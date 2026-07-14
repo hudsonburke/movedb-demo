@@ -11,3 +11,8 @@ dist/
 result
 .direnv/
 __marimo__/
+data/
+catalog.duckdb
+catalog.duckdb.wal
+ingest_checkpoint.json
+ingest_errors.log
