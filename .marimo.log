@@ -4,7 +4,9 @@
         ➜  URL: http://0.0.0.0:8080
         ➜  Network: http://10.0.0.206:8080
 
-ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 8080): [errno 98] address already in use
+/home/hudson/movedb-demo/.venv/lib/python3.12/site-packages/requests/__init__.py:92: RequestsDependencyWarning: Unable to find acceptable character detection dependency (chardet or charset_normalizer).
+  warnings.warn(
+/home/hudson/movedb-demo/.venv/lib/python3.12/site-packages/pydantic/plugin/_schema_validator.py:40: UserWarning: ModuleNotFoundError while loading the `logfire-plugin` Pydantic plugin, this plugin will not be installed.
 
-        Thanks for using marimo! 🌊🍃
-
+ModuleNotFoundError("No module named 'certifi'")
+  plugins = get_plugins()

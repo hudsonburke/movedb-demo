@@ -198,8 +198,12 @@ def _(mo):
         value="100",
         label="Max trials (empty = no limit)",
     )
-    trial_limit
-    return (trial_limit,)
+    require_full_strides = mo.ui.checkbox(
+        value=False,
+        label="Only trials with full strides",
+    )
+    mo.hstack([trial_limit, require_full_strides])
+    return require_full_strides, trial_limit
 
 
 @app.cell
@@ -296,6 +300,9 @@ def _(
     height_filter,
     mass_filter,
     mo,
+    np,
+    pl,
+    require_full_strides,
     run_btn,
     sex_filter,
     sql_editor,
@@ -304,6 +311,59 @@ def _(
     if run_btn.value:
         try:
             query_result = conn.execute(sql_editor.value.strip()).pl()
+            
+            # Filter for trials with full strides if requested
+            if require_full_strides.value and query_result.height:
+                _trials_with_strides = set()
+                for _trial_name, _sub_id in query_result.select("trial_name", "subject_id").rows():
+                    _contact_df = conn.execute(f"""
+                        SELECT body_name, contact FROM grf
+                        WHERE subject_id = '{_sub_id}' AND trial_name = '{_trial_name}'
+                        ORDER BY frame
+                    """).pl()
+                    if _contact_df.height == 0:
+                        continue
+                    
+                    # Check for strides using both feet
+                    _bodies = sorted(_contact_df["body_name"].unique().to_list())
+                    if len(_bodies) < 2:
+                        _primary_body = _bodies[0]
+                    else:
+                        _primary_body = next((b for b in _bodies if '_l' in b), _bodies[0])
+                    
+                    _arr = _contact_df.filter(
+                        pl.col("body_name") == _primary_body
+                    )["contact"].to_numpy()
+                    _strikes = np.where(np.diff(_arr.astype(int)) == 1)[0]
+                    
+                    if len(_strikes) < 3:  # Need at least 2 full strides
+                        continue
+                    
+                    # Validate strides have double support
+                    if len(_bodies) >= 2:
+                        _other_body = [b for b in _bodies if b != _primary_body][0]
+                        _other_contact = _contact_df.filter(
+                            pl.col("body_name") == _other_body
+                        )["contact"].to_numpy()
+                        
+                        _valid_count = 0
+                        for _si in range(len(_strikes) - 1):
+                            _start_idx = _strikes[_si]
+                            _end_idx = _strikes[_si + 1]
+                            _stride_contact = _arr[_start_idx:_end_idx+1]
+                            _other_stride = _other_contact[_start_idx:_end_idx+1]
+                            _double_support = np.sum((_stride_contact == 1) & (_other_stride == 1))
+                            if _double_support > 0:
+                                _valid_count += 1
+                        if _valid_count >= 1:
+                            _trials_with_strides.add(_trial_name)
+                    else:
+                        _trials_with_strides.add(_trial_name)
+                
+                query_result = query_result.filter(
+                    pl.col("trial_name").is_in(list(_trials_with_strides))
+                )
+            
             if query_result.height:
                 _n_trials = query_result.height
                 _n_frames = query_result["num_frames"].sum()
@@ -319,6 +379,8 @@ def _(
                     _filter_parts.append(f"height={height_filter.value[0]:.2f}-{height_filter.value[1]:.2f}m")
                 if age_filter.value[0] > age_filter.start or age_filter.value[1] < age_filter.stop:
                     _filter_parts.append(f"age={int(age_filter.value[0])}-{int(age_filter.value[1])}yr")
+                if require_full_strides.value:
+                    _filter_parts.append("full strides only")
 
                 _filter_str = f" ({', '.join(_filter_parts)})" if _filter_parts else ""
                 _output = mo.md(f"**{_n_trials} trials** from **{_n_subjects} subjects** ({_n_frames:,} frames){_filter_str}")
@@ -475,7 +537,7 @@ def _(conn, CubicSpline, go, make_subplots, mo, np, pl, plot_kind, query_result,
                 _fig.update_layout(height=300 * _n_params, title=f"{_y_title} — Raw Data")
                 _output = mo.ui.plotly(_fig)
             elif _kind == "gait cycle normalized":
-                # Normalize to gait cycle using GRF contact events
+                # Normalize to gait cycle using GRF contact events from BOTH feet
                 _trials = _df["trial_name"].unique().to_list()
                 _norm_rows = []
                 _stride_id = 0
@@ -483,33 +545,80 @@ def _(conn, CubicSpline, go, make_subplots, mo, np, pl, plot_kind, query_result,
                     _trial_data = _df.filter(pl.col("trial_name") == _trial)
                     _sub_id = query_result.filter(pl.col("trial_name") == _trial)["subject_id"][0]
                     _contact_df = conn.execute(f"""
-                        SELECT frame, body_name, contact FROM grf
+                        SELECT frame, time, body_name, contact FROM grf
                         WHERE subject_id = '{_sub_id}' AND trial_name = '{_trial}'
                         ORDER BY frame
                     """).pl()
                     if _contact_df.height == 0:
                         continue
-                    _body = _contact_df["body_name"].unique().sort()[0]
-                    _c = _contact_df.filter(pl.col("body_name") == _body).sort("frame")
+                    
+                    # Get contact data for both feet
+                    _bodies = sorted(_contact_df["body_name"].unique().to_list())
+                    if len(_bodies) < 2:
+                        # Single foot - fall back to simple detection
+                        _primary_body = _bodies[0]
+                    else:
+                        # Use left foot as primary for gait cycle definition
+                        _primary_body = next((b for b in _bodies if '_l' in b), _bodies[0])
+                    
+                    _c = _contact_df.filter(pl.col("body_name") == _primary_body).sort("frame")
                     _arr = _c["contact"].to_numpy()
+                    _times = _c["time"].to_numpy()
+                    
+                    # Detect heel strikes (rising edges: 0 -> 1)
                     _strikes = np.where(np.diff(_arr.astype(int)) == 1)[0]
-                    _frames = _c["frame"].to_numpy()
                     if len(_strikes) < 2:
                         continue
-                    for _si in range(len(_strikes) - 1):
-                        _sf = int(_frames[_strikes[_si]])
-                        _ef = int(_frames[_strikes[_si + 1]])
-                        if _ef - _sf < 10:
+                    
+                    # Validate strides: check for double support phase
+                    # (both feet in contact) to confirm proper gait pattern
+                    _valid_strides = []
+                    if len(_bodies) >= 2:
+                        _other_body = [b for b in _bodies if b != _primary_body][0]
+                        _other_contact = _contact_df.filter(
+                            pl.col("body_name") == _other_body
+                        ).sort("frame")["contact"].to_numpy()
+                        
+                        for _si in range(len(_strikes) - 1):
+                            _start_idx = _strikes[_si]
+                            _end_idx = _strikes[_si + 1]
+                            # Check if other foot is in contact during this stride
+                            # (valid walking gait has double support phases)
+                            _stride_contact = _arr[_start_idx:_end_idx+1]
+                            _other_stride_contact = _other_contact[_start_idx:_end_idx+1]
+                            _double_support = np.sum((_stride_contact == 1) & (_other_stride_contact == 1))
+                            if _double_support > 0:
+                                _valid_strides.append(_si)
+                    else:
+                        _valid_strides = list(range(len(_strikes) - 1))
+                    
+                    # Skip first and last strides (often partial)
+                    if len(_valid_strides) > 2:
+                        _valid_strides = _valid_strides[1:-1]
+                    
+                    for _si in _valid_strides:
+                        _start_idx = _strikes[_si]
+                        _end_idx = _strikes[_si + 1]
+                        _t_start = float(_times[_start_idx])
+                        _t_end = float(_times[_end_idx])
+                        _stride_duration = _t_end - _t_start
+                        
+                        if _stride_duration < 0.3:  # Min 300ms for valid stride
                             continue
+                        
+                        # Filter by time range instead of frame numbers
                         _stride_data = _trial_data.filter(
-                            (pl.col("frame") >= _sf) & (pl.col("frame") <= _ef)
-                        ).sort("frame").unique("frame")
+                            (pl.col("time") >= _t_start) & (pl.col("time") <= _t_end)
+                        ).sort("time").unique("time")
+                        
                         if _stride_data.height < 4:
                             continue
+                        
                         # Cubic spline interpolation to 101 points (0-100%)
-                        _frames_arr = _stride_data["frame"].to_numpy().astype(float)
+                        _times_arr = _stride_data["time"].to_numpy()
                         _values = _stride_data[_y_col].to_numpy()
-                        _pct_arr = (_frames_arr - _sf) / (_ef - _sf) * 100
+                        _pct_arr = (_times_arr - _t_start) / _stride_duration * 100
+                        
                         # Ensure endpoints are included
                         if _pct_arr[0] > 0:
                             _pct_arr = np.insert(_pct_arr, 0, 0.0)
@@ -517,12 +626,15 @@ def _(conn, CubicSpline, go, make_subplots, mo, np, pl, plot_kind, query_result,
                         if _pct_arr[-1] < 100:
                             _pct_arr = np.append(_pct_arr, 100.0)
                             _values = np.append(_values, _values[-1])
+                        
                         # Remove any duplicate x values
                         _mask = np.diff(_pct_arr, prepend=-1) > 0
                         _pct_arr = _pct_arr[_mask]
                         _values = _values[_mask]
+                        
                         if len(_pct_arr) < 4:
                             continue
+                        
                         _cs = CubicSpline(_pct_arr, _values)
                         _interp_pcts = np.linspace(0, 100, 101)
                         _interp_vals = _cs(_interp_pcts)
@@ -582,39 +694,82 @@ def _(conn, CubicSpline, go, make_subplots, mo, np, pl, plot_kind, query_result,
                     _fig.update_xaxes(title_text="% Gait Cycle", range=[0, 100], row=_n_params, col=1)
                     _fig.update_layout(height=300 * _n_params, title=f"{_y_title}")
                     _output = mo.ui.plotly(_fig)
-            else:  # mean ± SD (raw time)
-                _agg = (
-                    _df.group_by("time", _param_col)
-                    .agg(pl.col(_y_col).mean().alias("mean"), pl.col(_y_col).std().alias("std"))
-                    .with_columns(
-                        (pl.col("mean") - pl.col("std")).alias("lo"),
-                        (pl.col("mean") + pl.col("std")).alias("hi"),
+            else:  # mean ± SD (normalized time)
+                # Normalize time to 0-100% of trial duration for each trial
+                _trials_list = _df["trial_name"].unique().to_list()
+                _norm_rows = []
+                for _trial in _trials_list:
+                    _trial_data = _df.filter(pl.col("trial_name") == _trial).sort("time")
+                    if _trial_data.height < 2:
+                        continue
+                    _t_min = _trial_data["time"].min()
+                    _t_max = _trial_data["time"].max()
+                    _t_range = _t_max - _t_min
+                    if _t_range <= 0:
+                        continue
+                    # Normalize time to 0-100%
+                    _trial_data = _trial_data.with_columns(
+                        ((pl.col("time") - _t_min) / _t_range * 100).alias("time_pct")
                     )
-                    .sort("time")
-                )
-                _fig = make_subplots(rows=_n_params, cols=1, subplot_titles=[f"{p} — mean ± SD" for p in _params], shared_xaxes=True, vertical_spacing=0.05)
-                for _i, _p in enumerate(_params, 1):
-                    _sub = _agg.filter(pl.col(_param_col) == _p)
-                    # SD band
-                    _fig.add_trace(go.Scatter(
-                        x=_sub["time"].to_list() + _sub["time"].to_list()[::-1],
-                        y=_sub["hi"].to_list() + _sub["lo"].to_list()[::-1],
-                        fill="toself",
-                        fillcolor="rgba(31,119,180,0.1)",
-                        line=dict(color="rgba(0,0,0,0)"),
-                        showlegend=False,
-                    ), row=_i, col=1)
-                    # Mean line
-                    _fig.add_trace(go.Scatter(
-                        x=_sub["time"].to_list(),
-                        y=_sub["mean"].to_list(),
-                        line=dict(color="#1f77b4", width=2),
-                        name="Mean",
-                        showlegend=(_i == 1),
-                    ), row=_i, col=1)
-                _fig.update_xaxes(title_text="Time (s)", row=_n_params, col=1)
-                _fig.update_layout(height=300 * _n_params, title=f"{_y_title}")
-                _output = mo.ui.plotly(_fig)
+                    # Interpolate to 101 points for consistent sampling
+                    _pct_arr = _trial_data["time_pct"].to_numpy()
+                    _values = _trial_data[_y_col].to_numpy()
+                    if len(_pct_arr) < 4:
+                        continue
+                    # Remove duplicates and ensure monotonic
+                    _mask = np.diff(_pct_arr, prepend=-1) > 0
+                    _pct_arr = _pct_arr[_mask]
+                    _values = _values[_mask]
+                    if len(_pct_arr) < 4:
+                        continue
+                    _cs = CubicSpline(_pct_arr, _values)
+                    _interp_pcts = np.linspace(0, 100, 101)
+                    _interp_vals = _cs(_interp_pcts)
+                    _param_val = _trial_data[_param_col][0]
+                    for _pct, _val in zip(_interp_pcts, _interp_vals):
+                        _norm_rows.append({
+                            "time_pct": float(_pct),
+                            _y_col: float(_val),
+                            "trial": _trial,
+                            _param_col: _param_val,
+                        })
+                
+                if not _norm_rows:
+                    _output = mo.md("*No valid data for mean ± SD plot.*")
+                else:
+                    _norm_df = pl.DataFrame(_norm_rows)
+                    _agg = (
+                        _norm_df.group_by("time_pct", _param_col)
+                        .agg(pl.col(_y_col).mean().alias("mean"), pl.col(_y_col).std().alias("std"))
+                        .with_columns(
+                            (pl.col("mean") - pl.col("std")).alias("lo"),
+                            (pl.col("mean") + pl.col("std")).alias("hi"),
+                        )
+                        .sort("time_pct")
+                    )
+                    _fig = make_subplots(rows=_n_params, cols=1, subplot_titles=[f"{p} — mean ± SD" for p in _params], shared_xaxes=True, vertical_spacing=0.05)
+                    for _i, _p in enumerate(_params, 1):
+                        _sub = _agg.filter(pl.col(_param_col) == _p)
+                        # SD band
+                        _fig.add_trace(go.Scatter(
+                            x=_sub["time_pct"].to_list() + _sub["time_pct"].to_list()[::-1],
+                            y=_sub["hi"].to_list() + _sub["lo"].to_list()[::-1],
+                            fill="toself",
+                            fillcolor="rgba(31,119,180,0.1)",
+                            line=dict(color="rgba(0,0,0,0)"),
+                            showlegend=False,
+                        ), row=_i, col=1)
+                        # Mean line
+                        _fig.add_trace(go.Scatter(
+                            x=_sub["time_pct"].to_list(),
+                            y=_sub["mean"].to_list(),
+                            line=dict(color="#1f77b4", width=2),
+                            name="Mean",
+                            showlegend=(_i == 1),
+                        ), row=_i, col=1)
+                    _fig.update_xaxes(title_text="% Trial Duration", range=[0, 100], row=_n_params, col=1)
+                    _fig.update_layout(height=300 * _n_params, title=f"{_y_title}")
+                    _output = mo.ui.plotly(_fig)
     _output
     return
 

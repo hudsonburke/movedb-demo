@@ -16,3 +16,4 @@ catalog.duckdb
 catalog.duckdb.wal
 ingest_checkpoint.json
 ingest_errors.log
+.marimo*

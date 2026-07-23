@@ -7,7 +7,7 @@
   "cells": [
     {
       "id": "Hbol",
-      "code_hash": "3ebb21c86a72dafb4b7512cebbc095c7",
+      "code_hash": "0d08b887cb910b06fa6ec9144adb96c7",
       "outputs": [],
       "console": []
     },
@@ -25,7 +25,7 @@
     },
     {
       "id": "bkHC",
-      "code_hash": "c1520b71028c68b3e31b9b6caa95ca84",
+      "code_hash": "420ce9520a462ba00cd4e422a07fb23e",
       "outputs": [],
       "console": []
     },
@@ -49,7 +49,7 @@
     },
     {
       "id": "SFPL",
-      "code_hash": "442810c9bf16db1b4648c25c2b9f2eb7",
+      "code_hash": "35b1a6aedb8fa7bc908e5e4b53ace1cd",
       "outputs": [],
       "console": []
     },
@@ -67,7 +67,7 @@
     },
     {
       "id": "Kclp",
-      "code_hash": "274358bf4e0aca05670e55d0d54c2861",
+      "code_hash": "c4bfcbde2dfe66fd231b50a349feed55",
       "outputs": [],
       "console": []
     },
@@ -104,49 +104,18 @@
     },
     {
       "id": "ZHCJ",
-      "code_hash": "c782d4b3c724b828343118bb9cfea092",
+      "code_hash": "e65712683d46beafe23cf9652142411f",
       "outputs": [],
       "console": []
     },
     {
       "id": "ROlb",
-      "code_hash": "b1912c40760ddc586d12ea9ec623cbd6",
+      "code_hash": "7b6258cc10133387de28f29a5aff1d05",
       "outputs": [],
       "console": []
     },
     {
       "id": "qnkX",
-      "code_hash": "d917cc98ab1b77c6c5f6803a38caf021",
-      "outputs": [
-        {
-          "type": "data",
-          "data": {
-            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"stride-normalization\">Stride Normalization</h2></span>"
-          }
-        }
-      ],
-      "console": []
-    },
-    {
-      "id": "TqIu",
-      "code_hash": "ad25dd6b9be0e48a753fc606914c12d9",
-      "outputs": [],
-      "console": []
-    },
-    {
-      "id": "Vxnm",
-      "code_hash": "5002f771f2dbee31c8ec90a0939eb3f0",
-      "outputs": [],
-      "console": []
-    },
-    {
-      "id": "DnEU",
-      "code_hash": "daa0c72b6c88524aa7fe68e4d0a031d7",
-      "outputs": [],
-      "console": []
-    },
-    {
-      "id": "ulZA",
       "code_hash": null,
       "outputs": [],
       "console": []
